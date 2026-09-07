@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
-const {words,validateBrief,parseStory,report,escapeHTML,Store,Router,imageExtension,audioExtension} = require('../src/core.cjs');
+const {DEFAULT_AUDIO_MODEL,modelSettings,words,validateBrief,parseStory,report,escapeHTML,Store,Router,imageExtension,audioExtension} = require('../src/core.cjs');
 const brief = {name:'Ela',age:4,language:'Türkçe',theme:'Paylaşma',characters:'Ela ve Pofi',style:'Suluboya',tone:'Sakin',kind:'Uyku',pageCount:24,consent:true};
 const paragraph = 'Ela küçük tavşanıyla birlikte güzel bahçeye gitti ve orada yeni arkadaşı için renkli bir çiçek buldu.';
 const story = () => ({title:'Ela ve Pofi',characterBible:'Ela sarı paltolu, Pofi beyaz tavşan.',pages:Array.from({length:24},()=>({text:paragraph,imagePrompt:'Ela and a white rabbit in the garden.'}))});
@@ -29,6 +29,24 @@ test('export escapes model text to prevent HTML injection',()=>assert.equal(esca
 test('book store survives reload and denies path traversal',async()=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'noritales-test-'));
   try{const s=new Store(root),b={...story(),brief,id:randomUUID(),created:new Date().toISOString()};await s.save(b);assert.deepEqual(await s.read(b.id),b);assert.equal((await s.list()).length,1);assert.throws(()=>s.dir('../../etc'));await assert.rejects(s.asset(b.id,'../settings.json'));}finally{await fs.rm(root,{recursive:true,force:true});}
+});
+test('settings default to Voxtral Mini TTS while preserving explicit selections',()=>{
+  assert.equal(modelSettings().audioModel,DEFAULT_AUDIO_MODEL);
+  assert.equal(modelSettings({audioModel:''}).audioModel,'mistralai/voxtral-mini-tts-2603');
+  assert.equal(modelSettings({audioModel:' custom/tts '}).audioModel,'custom/tts');
+});
+test('model discovery requests all modalities and exposes speech output',async()=>{
+  const r=new Router('test',async(url,opts)=>{
+    assert.equal(url,'https://openrouter.ai/api/v1/models?output_modalities=all');
+    assert.equal(opts.method,'GET');
+    return Response.json({data:[
+      {id:'test/text',name:'Text',architecture:{input_modalities:['text'],output_modalities:['text']}},
+      {id:'mistralai/voxtral-mini-tts-2603',name:'Voxtral Mini TTS',architecture:{input_modalities:['text'],output_modalities:['speech']}}
+    ]});
+  });
+  const models=await r.models();
+  assert.equal(models.length,2);
+  assert.deepEqual(models.find(model=>model.id===DEFAULT_AUDIO_MODEL).output,['speech']);
 });
 test('image payload includes reference photos and character guide',async()=>{
   let payload;const png=Buffer.from([137,80,78,71,13,10,26,10]);

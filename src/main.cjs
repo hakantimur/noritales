@@ -3,11 +3,11 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const {randomUUID} = require('node:crypto');
-const {Store, Router, required, validateBrief, report, escapeHTML, imageExtension, audioExtension} = require('./core.cjs');
+const {Store, Router, modelSettings, required, validateBrief, report, escapeHTML, imageExtension, audioExtension} = require('./core.cjs');
 let win, store, key = '', busy = false;
 let selections = {photos: [], voice: null};
 const uiURL = pathToFileURL(path.join(__dirname, 'index.html')).href;
-let settings = {textModel:'',imageModel:'',audioModel:''};
+let settings = modelSettings();
 function router() { return new Router(key); }
 function handle(name, fn) {
   ipcMain.handle(name, async (event, ...args) => {
@@ -29,7 +29,7 @@ async function hydrated(book) {
 function register() {
   handle('settings', () => ({...settings,hasKey:!!key,storage:path.join(app.getPath('userData'),'books')}));
   handle('save-settings', input => exclusive(async () => {
-    settings = Object.fromEntries(['textModel','imageModel','audioModel'].map(k => [k, String(input[k] || '').trim().slice(0,200)]));
+    settings = modelSettings(input);
     if (input.key) key = required(input.key, 'API anahtarı', 1000);
     const persisted = {...settings};
     if (input.remember && key) {
@@ -39,10 +39,7 @@ function register() {
     await fs.writeFile(path.join(app.getPath('userData'),'settings.json'),JSON.stringify(persisted),{mode:0o600});
     return {hasKey:!!key};
   }));
-  handle('models', async () => {
-    const r = await router().request('/models'); const data = await r.json();
-    return (data.data || []).map(m => ({id:m.id, name:m.name, input:m.architecture?.input_modalities || [], output:m.architecture?.output_modalities || [], pricing:m.pricing || {}}));
-  });
+  handle('models', () => router().models());
   handle('pick', kind => exclusive(async () => {
     if (!['photos','voice'].includes(kind)) throw Error('Geçersiz seçim.');
     const photos = kind === 'photos';
@@ -136,7 +133,7 @@ app.whenReady().then(async () => {
   store = new Store(path.join(app.getPath('userData'),'books'));
   try {
     const saved = JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'settings.json'),'utf8'));
-    for (const k of Object.keys(settings)) settings[k] = String(saved[k] || '');
+    settings = modelSettings(saved);
     if (saved.encryptedKey && safeStorage.isEncryptionAvailable()) key = safeStorage.decryptString(Buffer.from(saved.encryptedKey,'base64'));
   } catch { /* First run or OS key unavailable: ask for key again. */ }
   session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
